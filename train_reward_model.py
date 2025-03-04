@@ -4,6 +4,7 @@ import logging
 import torch
 import torch.nn.functional as F
 from transformers import (
+    AutoConfig,
     AutoModelForSequenceClassification,
     AutoTokenizer,
     HfArgumentParser,
@@ -47,6 +48,7 @@ class TrainingArguments(TrainingArguments):
     )
     test_only:bool = field(default=False)
     checkpoint_dir:str = field(default="")
+    deepspeed: str = field(default="")
 
 
 def preprocess_function(sources, next_steps, tokenizer: PreTrainedTokenizer):
@@ -119,13 +121,6 @@ class RewardDataCollatorWithPadding(object):
             labels=labels,
             attention_mask=input_ids.ne(self.tokenizer.pad_token_id),
         )
-
-
-class my_trainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
-        outputs = model(**inputs)
-        loss=outputs.loss
-        return (loss, outputs) if return_outputs else loss
     
 
 def compute_metrics(eval_pred):
@@ -136,15 +131,15 @@ def compute_metrics(eval_pred):
     return {"accuracy": acc, "f1": f1}
  
 
-
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     set_seed(training_args.seed)
     tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_path)
-    model = AutoModelForSequenceClassification.from_pretrained(model_args.model_path, num_labels=model_args.num_labels, torch_dtype=torch.bfloat16) if model_args.num_labels else AutoModelForCausalLM.from_pretrained(model_args.model_path, torch_dtype=torch.bfloat16)
+    model = AutoModelForSequenceClassification.from_pretrained(model_args.model_path, attn_implementation="flash_attention_2", num_labels=model_args.num_labels, torch_dtype=torch.bfloat16) if model_args.num_labels else AutoModelForCausalLM.from_pretrained(model_args.model_path, torch_dtype=torch.bfloat16)
     tokenizer.model_max_length = training_args.max_length
     add_tokenizer(model, tokenizer)
+    print(model.config._attn_implementation)
     train_dataset = RewardDataset(data_args.train_data_path, tokenizer, model_args.num_labels)
     if data_args.eval_data_path=="": 
         eval_dataset = RewardDataset(data_args.train_data_path, tokenizer, model_args.num_labels)
@@ -153,7 +148,7 @@ def main():
     else:
         eval_dataset = RewardDataset(data_args.eval_data_path, tokenizer, model_args.num_labels)
     print(len(train_dataset),len(eval_dataset))
-    trainer = my_trainer(
+    trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,

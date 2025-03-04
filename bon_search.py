@@ -7,7 +7,9 @@ import json
 from tqdm import tqdm
 from mcts_math.agents.utils import math_is_equiv
 import argparse
-from utils import get_model_name,get_dataset_name,ag_step,generate_numi_steps_test,get_sc_final_answer,verify_solution,add_tokenizer,eval_answer,get_prompt
+from utils import get_model_name,get_dataset_name,ag_step,get_sc_final_answer,verify_solution,add_tokenizer,get_prompt,extract_answer
+from generate_train_data import generate_numi_steps_test,eval_answer
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -27,6 +29,26 @@ def parse_args():
     parser.add_argument("--use_history", action= "store_true")
     return parser.parse_args()
 
+# def eval_answer(pred_text,ground_truth):
+#     import signal
+#     timeout_seconds = 10*60
+#     class TimeoutError(Exception):
+#         pass
+#     def handler(signum, frame):
+#         raise TimeoutError()
+#     signal.signal(signal.SIGALRM, handler)
+#     signal.alarm(timeout_seconds)
+#     try:
+#         pred=extract_answer(pred_text)
+#         if pred=="bad_answer":
+#             return False
+#         result = math_is_equiv(pred,ground_truth)
+#     except TimeoutError as exc:
+#         result = False
+#     finally:
+#         signal.alarm(0)
+#         signal.signal(signal.SIGALRM, signal.SIG_DFL)
+#     return result
 
 class bon_search:
 
@@ -43,11 +65,12 @@ class bon_search:
         self.batch_size=args.batch_size
         self.start=args.start
         self.use_history=args.use_history
+        self.verifier_dir=args.verify_model_dir
 
     def generate_solutions(self):
-        model_dir=self.model_dir
+        model_dir=self.generate_model_dir
         generate_llm = LLM(
-            model=self.model_dir,
+            model = model_dir,
             tensor_parallel_size=1,
             trust_remote_code=True,
             gpu_memory_utilization=0.9,
@@ -83,6 +106,7 @@ class bon_search:
             with open(self.save_dir,"a") as file:
                 file.write(json.dumps(save_data) + '\n')
 
+
     def major_vote(self):
         total_q,sc_acc_list,=0,[0,0,0,0,0,0,0]
         with open(self.data_dir,"r") as f:
@@ -104,7 +128,7 @@ class bon_search:
                 f.write("\n")
 
 
-    def save_result(solution_data_dir,verifier_dir,total_q,min_value_acc_list,final_step_value_acc_list,sc_acc_list):
+    def save_result(self,solution_data_dir,verifier_dir,total_q,min_value_acc_list,final_step_value_acc_list,sc_acc_list):
         for name in ["prm800k","shepherd","perplexity","openr"]:
             if name in verifier_dir:
                 if verifier_dir!="":

@@ -8,7 +8,7 @@ import json
 from tqdm import tqdm
 from mcts_math.agents.utils import math_is_equiv
 import argparse
-from utils import ag_step,generate_numi_steps_test,extract_answer,get_model_name,get_dataset_name,eval_answer,get_prompt
+from utils import ag_step,extract_answer,get_model_name,get_prompt
 import time
 import math
 
@@ -27,6 +27,79 @@ def parse_args():
     parser.add_argument("--use_adaptive_binary", action= "store_true")
     parser.add_argument("--sequential_search", action= "store_true")
     return parser.parse_args()
+
+
+def eval_answer(pred_text,ground_truth):
+    import signal
+    timeout_seconds = 10*60
+    class TimeoutError(Exception):
+        pass
+    def handler(signum, frame):
+        raise TimeoutError()
+    signal.signal(signal.SIGALRM, handler)
+    signal.alarm(timeout_seconds)
+    try:
+        pred=extract_answer(pred_text)
+        if pred=="bad_answer":
+            return False
+        # print(pred,"===============",ground_truth)
+        result = math_is_equiv(pred,ground_truth)
+    except TimeoutError as exc:
+        result = False
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, signal.SIG_DFL)
+    return result
+
+def generate_numi_steps_test(node, generate_tokenizer, generate_llm, test_n, numi,temperature,top_p,ori_prompt,max_tokens=None,gemma=False):
+    stop = ["I hope it is correct.", "ASSISTANT:", "ASSISTANT", "assistant", f"Step {numi + 2}", f"step {numi + 2}", f"Step{numi + 2}", f"step{numi + 2}","<|eot_id|>","<|start_header_id|>","<|endoftext|>","end{document}"]
+    sampling_params = SamplingParams(
+        temperature=temperature,
+        top_k=-1,
+        top_p=top_p,
+        max_tokens=800 if numi>0 else 4000,
+        n=test_n,
+        stop=stop,
+        seed=69,
+        logprobs=1
+    )
+    sampling_params.max_tokens=max_tokens if max_tokens is not None else sampling_params.max_tokens
+    prompt = f"Instruction:{node.question}\nResponse: Let’s think step by step.\n{node.previous_steps}"
+    if ori_prompt is None:
+        if gemma:
+            generate_prompt = [{"role":"user","content":"You are a powerful agent with broad math knowledge and good at accurate calculation on math equations.Below is an instruction that describes a task. Continue to finish the response that appropriately completes the request Within a maximum of 40 steps. When outputting each step, mark the sequence number of each step at the beginning, and explicitly state the final answer after the final step following the format 'The final answer is:'.After outputting the final answer only once, be sure to stop outputting."},
+                            {"role":"assistant","content":"OK, I understand."},
+                            {"role":"user","content":"Instruction: If the lengths of two sides of a right triangle are 5 and 12 units, what is the least possible length, in units, of the third side? Express your answer in simplest radical form."},
+                            {"role":"assistant","content":"Response: Let’s think step by step.\nStep 1:I know that the Pythagorean theorem relates the lengths of the sides of a right triangle by the equation a^2 + b^2 = c^2, where c is the hypotenuse and a and b are the legs.\nStep 2:Since I don't know which side is the hypotenuse, I'll try both possibilities and see which one gives me a smaller value for the third side.\nStep 3:If I assume that the hypotenuse is 12, then the other leg must satisfy 5^2 + b^2 = 12^2, or b^2 = 144 - 25 = 119.\nStep 4:Taking the square root of both sides, I get b = sqrt(119), which is already in simplest radical form.\nStep 5:If I assume that the hypotenuse is the unknown side, then it must satisfy 5^2 + 12^2 = c^2, or c^2 = 25 + 144 = 169.\nStep 6:Taking the square root of both sides, I get c = sqrt(169) = 13.\nStep 7:Comparing the two values, I see that sqrt(119) is smaller than 13, since 119 is smaller than 169.The final answer is 119\n"},
+                            {"role":"user","content":"Instruction: A square has sides of length 10, and a circle centered at one of its vertices has radius 10.  What is the area of the union of the regions enclosed by the square and the circle? Express your answer in terms of $\\pi$.\nResponse: Let’s think step by step.\nStep 1:I want to find the area of the shaded region in this picture, where the blue is the square and the red is the circle.\nStep 2:I notice that the circle and the square share a quarter of the circle's area, which is $\\frac{{1}}{{4}}\\pi r^2$, where $r = 10$.\n"},
+                            {"role":"assistant","content":"Step 3:So I can subtract that from the sum of the areas of the circle and the square to get the area of the union.\nStep 4:The area of the circle is $\\pi r^2 = 100\\pi$, and the area of the square is $s^2 = 100$, where $s = 10$.\nStep 5:So the area of the union is $100\\pi + 100 - \\frac{{1}}{{4}}100\\pi = 100 + \\frac{{3}}{{4}}100\\pi$.\nStep 6: The final answer is: 100 + \\frac{{3}}{{4}}100\\pi.\n"},
+                            {"role":"user","content":prompt}]
+        else:
+            generate_prompt = [{"role":"system","content":"You are a powerful agent with broad math knowledge and good at accurate calculation on math equations.Below is an instruction that describes a task. Continue to finish the response that appropriately completes the request Within a maximum of 40 steps. When outputting each step, mark the sequence number of each step at the beginning, and explicitly state the final answer after the final step following the format 'The final answer is:'.After outputting the final answer only once, be sure to stop outputting."},
+                            {"role":"user","content":"Instruction: If the lengths of two sides of a right triangle are 5 and 12 units, what is the least possible length, in units, of the third side? Express your answer in simplest radical form."},
+                            {"role":"assistant","content":"Response: Let’s think step by step.\nStep 1:I know that the Pythagorean theorem relates the lengths of the sides of a right triangle by the equation a^2 + b^2 = c^2, where c is the hypotenuse and a and b are the legs.\nStep 2:Since I don't know which side is the hypotenuse, I'll try both possibilities and see which one gives me a smaller value for the third side.\nStep 3:If I assume that the hypotenuse is 12, then the other leg must satisfy 5^2 + b^2 = 12^2, or b^2 = 144 - 25 = 119.\nStep 4:Taking the square root of both sides, I get b = sqrt(119), which is already in simplest radical form.\nStep 5:If I assume that the hypotenuse is the unknown side, then it must satisfy 5^2 + 12^2 = c^2, or c^2 = 25 + 144 = 169.\nStep 6:Taking the square root of both sides, I get c = sqrt(169) = 13.\nStep 7:Comparing the two values, I see that sqrt(119) is smaller than 13, since 119 is smaller than 169.The final answer is 119\n"},
+                            {"role":"user","content":"Instruction: A square has sides of length 10, and a circle centered at one of its vertices has radius 10.  What is the area of the union of the regions enclosed by the square and the circle? Express your answer in terms of $\\pi$.\nResponse: Let’s think step by step.\nStep 1:I want to find the area of the shaded region in this picture, where the blue is the square and the red is the circle.\nStep 2:I notice that the circle and the square share a quarter of the circle's area, which is $\\frac{{1}}{{4}}\\pi r^2$, where $r = 10$.\n"},
+                            {"role":"assistant","content":"Step 3:So I can subtract that from the sum of the areas of the circle and the square to get the area of the union.\nStep 4:The area of the circle is $\\pi r^2 = 100\\pi$, and the area of the square is $s^2 = 100$, where $s = 10$.\nStep 5:So the area of the union is $100\\pi + 100 - \\frac{{1}}{{4}}100\\pi = 100 + \\frac{{3}}{{4}}100\\pi$.\nStep 6: The final answer is: 100 + \\frac{{3}}{{4}}100\\pi.\n"},
+                            {"role":"user","content":prompt}]
+    else:
+        generate_prompt=ori_prompt
+    generate_input=generate_tokenizer.apply_chat_template(generate_prompt,tokenize=False,add_generation_prompt=True,)
+    outputs = generate_llm.generate(generate_input, sampling_params, use_tqdm=False)
+    outputs_text,outputs_probs,num_output_tokens,cur_step_tokens=[],[],[],[]
+    for output in outputs:
+        for idx in range(test_n):
+            try:
+                text=output.outputs[idx].text
+            except IndexError:
+                continue
+            if len(text)<10:
+                continue
+            outputs_text.append(text.strip())
+            #print(output.outputs[idx])
+            outputs_probs.append(output.outputs[idx].cumulative_logprob if output.outputs[idx].cumulative_logprob is not None else 0.0)
+            num_output_tokens.append([len(output.prompt_token_ids),len(output.outputs[idx].token_ids)])
+            cur_step_tokens.append(output.outputs[idx].token_ids)
+    return [ag_step(question=node.question, previous_steps=node.previous_steps, cur_step=outputs_text[i],num_step_tokens=num_output_tokens[i],step_prob=outputs_probs[i],cur_step_tokens=cur_step_tokens[i],ans=node.ans) for i in range(len(outputs_text))]
 
 
 class generate_prm_data:
